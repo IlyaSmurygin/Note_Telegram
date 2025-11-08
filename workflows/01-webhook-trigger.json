@@ -1,0 +1,349 @@
+{
+  "name": "01 - Webhook Trigger (Entry Point)",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "telegram",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-node",
+      "name": "Telegram Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [240, 300],
+      "webhookId": "telegram-webhook"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ $json.body.callback_query }}",
+              "operation": "isNotEmpty"
+            }
+          ]
+        }
+      },
+      "id": "if-callback",
+      "name": "Is Callback Query?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ $json.body.message.voice }}",
+              "operation": "isNotEmpty"
+            }
+          ]
+        }
+      },
+      "id": "if-voice",
+      "name": "Is Voice Message?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [680, 400]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ $json.body.message.text }}",
+              "operation": "isNotEmpty"
+            }
+          ]
+        }
+      },
+      "id": "if-text",
+      "name": "Is Text Message?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [900, 500]
+    },
+    {
+      "parameters": {
+        "queue": "callback_input",
+        "options": {
+          "arguments": {
+            "argument": [
+              {
+                "key": "x-message-ttl",
+                "value": "86400000"
+              }
+            ]
+          },
+          "durable": true
+        },
+        "sendInputData": false,
+        "messageData": "={{ {\n  \"user_id\": $json.body.callback_query.from.id,\n  \"chat_id\": $json.body.callback_query.message.chat.id,\n  \"callback_data\": $json.body.callback_query.data,\n  \"callback_id\": $json.body.callback_query.id,\n  \"message_id\": $json.body.callback_query.message.message_id\n} }}"
+      },
+      "id": "rabbitmq-callback",
+      "name": "To callback_input Queue",
+      "type": "n8n-nodes-base.rabbitmq",
+      "typeVersion": 1,
+      "position": [680, 200],
+      "credentials": {
+        "rabbitmq": {
+          "id": "1",
+          "name": "RabbitMQ account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "queue": "voice_transcribe",
+        "options": {
+          "arguments": {
+            "argument": [
+              {
+                "key": "x-message-ttl",
+                "value": "86400000"
+              }
+            ]
+          },
+          "durable": true
+        },
+        "sendInputData": false,
+        "messageData": "={{ {\n  \"user_id\": $json.body.message.from.id,\n  \"chat_id\": $json.body.message.chat.id,\n  \"file_id\": $json.body.message.voice.file_id,\n  \"message_id\": $json.body.message.message_id\n} }}"
+      },
+      "id": "rabbitmq-voice",
+      "name": "To voice_transcribe Queue",
+      "type": "n8n-nodes-base.rabbitmq",
+      "typeVersion": 1,
+      "position": [900, 300],
+      "credentials": {
+        "rabbitmq": {
+          "id": "1",
+          "name": "RabbitMQ account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "queue": "text_input",
+        "options": {
+          "arguments": {
+            "argument": [
+              {
+                "key": "x-message-ttl",
+                "value": "86400000"
+              }
+            ]
+          },
+          "durable": true
+        },
+        "sendInputData": false,
+        "messageData": "={{ {\n  \"user_id\": $json.body.message.from.id,\n  \"chat_id\": $json.body.message.chat.id,\n  \"text\": $json.body.message.text,\n  \"message_id\": $json.body.message.message_id,\n  \"timestamp\": $json.body.message.date\n} }}"
+      },
+      "id": "rabbitmq-text",
+      "name": "To text_input Queue",
+      "type": "n8n-nodes-base.rabbitmq",
+      "typeVersion": 1,
+      "position": [1120, 400],
+      "credentials": {
+        "rabbitmq": {
+          "id": "1",
+          "name": "RabbitMQ account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "queue": "http_errors",
+        "options": {
+          "durable": true
+        },
+        "sendInputData": false,
+        "messageData": "={{ {\n  \"error\": \"Unknown message type\",\n  \"body\": $json.body,\n  \"timestamp\": $now\n} }}"
+      },
+      "id": "rabbitmq-error",
+      "name": "To http_errors Queue",
+      "type": "n8n-nodes-base.rabbitmq",
+      "typeVersion": 1,
+      "position": [1120, 600],
+      "credentials": {
+        "rabbitmq": {
+          "id": "1",
+          "name": "RabbitMQ account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "OK"
+      },
+      "id": "respond-ok",
+      "name": "Respond OK",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1340, 300]
+    },
+    {
+      "parameters": {
+        "queue": "log_events",
+        "options": {
+          "durable": true
+        },
+        "sendInputData": false,
+        "messageData": "={{ {\n  \"event\": \"webhook_received\",\n  \"timestamp\": $now,\n  \"type\": $json.body.callback_query ? 'callback' : ($json.body.message.voice ? 'voice' : ($json.body.message.text ? 'text' : 'unknown'))\n} }}"
+      },
+      "id": "rabbitmq-log",
+      "name": "Log Event",
+      "type": "n8n-nodes-base.rabbitmq",
+      "typeVersion": 1,
+      "position": [1340, 500],
+      "credentials": {
+        "rabbitmq": {
+          "id": "1",
+          "name": "RabbitMQ account"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Telegram Webhook": {
+      "main": [
+        [
+          {
+            "node": "Is Callback Query?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Callback Query?": {
+      "main": [
+        [
+          {
+            "node": "To callback_input Queue",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Is Voice Message?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Voice Message?": {
+      "main": [
+        [
+          {
+            "node": "To voice_transcribe Queue",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Is Text Message?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Text Message?": {
+      "main": [
+        [
+          {
+            "node": "To text_input Queue",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "To http_errors Queue",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "To callback_input Queue": {
+      "main": [
+        [
+          {
+            "node": "Respond OK",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Log Event",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "To voice_transcribe Queue": {
+      "main": [
+        [
+          {
+            "node": "Respond OK",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Log Event",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "To text_input Queue": {
+      "main": [
+        [
+          {
+            "node": "Respond OK",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Log Event",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "To http_errors Queue": {
+      "main": [
+        [
+          {
+            "node": "Respond OK",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Log Event",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 0,
+  "updatedAt": "2025-11-08T16:00:00.000Z",
+  "versionId": "1"
+}
