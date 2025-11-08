@@ -1,0 +1,113 @@
+{
+  "name": "02 - Text Input Processor",
+  "nodes": [
+    {
+      "parameters": {
+        "queue": "text_input",
+        "options": {
+          "acknowledge": "immediatelyAfterMessageReceived"
+        }
+      },
+      "id": "rabbitmq-trigger",
+      "name": "RabbitMQ Trigger - text_input",
+      "type": "n8n-nodes-base.rabbitmqTrigger",
+      "typeVersion": 1,
+      "position": [240, 300],
+      "credentials": {
+        "rabbitmq": {
+          "id": "1",
+          "name": "RabbitMQ account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse incoming message\nconst message = JSON.parse($input.item.json.content.toString());\n\nreturn {\n  user_id: message.user_id,\n  chat_id: message.chat_id,\n  text: message.text,\n  message_id: message.message_id,\n  timestamp: message.timestamp || new Date().toISOString(),\n  type: message.type || 'text'\n};"
+      },
+      "id": "parse-message",
+      "name": "Parse Message",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "queue": "ai_analyze",
+        "options": {
+          "durable": true
+        },
+        "sendInputData": false,
+        "messageData": "={{ $json }}"
+      },
+      "id": "to-ai-analyze",
+      "name": "To ai_analyze Queue",
+      "type": "n8n-nodes-base.rabbitmq",
+      "typeVersion": 1,
+      "position": [680, 300],
+      "credentials": {
+        "rabbitmq": {
+          "id": "1",
+          "name": "RabbitMQ account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "queue": "log_events",
+        "options": {
+          "durable": true
+        },
+        "sendInputData": false,
+        "messageData": "={{ {\n  \"event\": \"text_received\",\n  \"user_id\": $json.user_id,\n  \"timestamp\": $now,\n  \"text_preview\": $json.text.substring(0, 50)\n} }}"
+      },
+      "id": "log-event",
+      "name": "Log Event",
+      "type": "n8n-nodes-base.rabbitmq",
+      "typeVersion": 1,
+      "position": [680, 450],
+      "credentials": {
+        "rabbitmq": {
+          "id": "1",
+          "name": "RabbitMQ account"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "RabbitMQ Trigger - text_input": {
+      "main": [
+        [
+          {
+            "node": "Parse Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Message": {
+      "main": [
+        [
+          {
+            "node": "To ai_analyze Queue",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Log Event",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 0,
+  "updatedAt": "2025-11-08T16:10:00.000Z",
+  "versionId": "1"
+}
