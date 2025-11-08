@@ -1,0 +1,464 @@
+{
+  "name": "07 - DB Operations (Neo4j)",
+  "nodes": [
+    {
+      "parameters": {
+        "queue": "db_ops",
+        "options": {
+          "acknowledge": "immediatelyAfterMessageReceived"
+        }
+      },
+      "id": "rabbitmq-trigger",
+      "name": "RabbitMQ Trigger - db_ops",
+      "type": "n8n-nodes-base.rabbitmqTrigger",
+      "typeVersion": 1,
+      "position": [240, 400],
+      "credentials": {
+        "rabbitmq": {
+          "id": "1",
+          "name": "RabbitMQ account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse incoming message\nconst message = JSON.parse($input.item.json.content.toString());\n\nreturn message;"
+      },
+      "id": "parse-message",
+      "name": "Parse Message",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 400]
+    },
+    {
+      "parameters": {
+        "mode": "raw",
+        "query": "=MERGE (u:User {telegram_id: $user_id})\nON CREATE SET u.created_at = datetime()\nRETURN u",
+        "parameters": {
+          "parameters": [
+            {
+              "name": "user_id",
+              "value": "={{ $json.user_id }}"
+            }
+          ]
+        }
+      },
+      "id": "ensure-user-exists",
+      "name": "Ensure User Exists",
+      "type": "n8n-nodes-base.neo4j",
+      "typeVersion": 1,
+      "position": [680, 400],
+      "credentials": {
+        "neo4j": {
+          "id": "4",
+          "name": "Neo4j account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "id": "switch-operation",
+      "name": "Switch by Operation",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 1,
+      "position": [900, 400],
+      "parameters": {
+        "dataPropertyName": "={{ $node[\"Parse Message\"].json.operation }}",
+        "rules": {
+          "rules": [
+            {
+              "value": "save",
+              "outputKey": 0
+            },
+            {
+              "value": "search",
+              "outputKey": 1
+            },
+            {
+              "value": "delete",
+              "outputKey": 2
+            },
+            {
+              "value": "stats",
+              "outputKey": 3
+            }
+          ]
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "raw",
+        "query": "=MATCH (u:User {telegram_id: $user_id})\nCREATE (n:{{ $json.type | capitalize }} {\n  id: randomUUID(),\n  text: $text,\n  improved_text: $improved_text,\n  created_at: datetime()\n})\nCREATE (u)-[:CREATED]->(n)\nWITH n\nUNWIND $tags AS tag_name\nMERGE (t:Tag {name: tag_name})\nCREATE (n)-[:TAGGED_WITH]->(t)\nRETURN n",
+        "parameters": {
+          "parameters": [
+            {
+              "name": "user_id",
+              "value": "={{ $node[\"Parse Message\"].json.user_id }}"
+            },
+            {
+              "name": "text",
+              "value": "={{ $node[\"Parse Message\"].json.text }}"
+            },
+            {
+              "name": "improved_text",
+              "value": "={{ $node[\"Parse Message\"].json.improved_text }}"
+            },
+            {
+              "name": "tags",
+              "value": "={{ $node[\"Parse Message\"].json.tags }}"
+            }
+          ]
+        }
+      },
+      "id": "save-operation",
+      "name": "Save to Neo4j",
+      "type": "n8n-nodes-base.neo4j",
+      "typeVersion": 1,
+      "position": [1120, 200],
+      "credentials": {
+        "neo4j": {
+          "id": "4",
+          "name": "Neo4j account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "raw",
+        "query": "=MATCH (u:User {telegram_id: $user_id})-[:CREATED]->(n)\nWHERE ($tag IS NULL OR (n)-[:TAGGED_WITH]->(:Tag {name: $tag}))\nRETURN n\nORDER BY n.created_at DESC\nLIMIT 10",
+        "parameters": {
+          "parameters": [
+            {
+              "name": "user_id",
+              "value": "={{ $node[\"Parse Message\"].json.user_id }}"
+            },
+            {
+              "name": "tag",
+              "value": "={{ $node[\"Parse Message\"].json.params.tag || null }}"
+            }
+          ]
+        }
+      },
+      "id": "search-operation",
+      "name": "Search in Neo4j",
+      "type": "n8n-nodes-base.neo4j",
+      "typeVersion": 1,
+      "position": [1120, 350],
+      "credentials": {
+        "neo4j": {
+          "id": "4",
+          "name": "Neo4j account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "raw",
+        "query": "=MATCH (u:User {telegram_id: $user_id})-[:CREATED]->(n {id: $id})\nDETACH DELETE n\nRETURN count(n) as deleted",
+        "parameters": {
+          "parameters": [
+            {
+              "name": "user_id",
+              "value": "={{ $node[\"Parse Message\"].json.user_id }}"
+            },
+            {
+              "name": "id",
+              "value": "={{ $node[\"Parse Message\"].json.params.id }}"
+            }
+          ]
+        }
+      },
+      "id": "delete-operation",
+      "name": "Delete from Neo4j",
+      "type": "n8n-nodes-base.neo4j",
+      "typeVersion": 1,
+      "position": [1120, 500],
+      "credentials": {
+        "neo4j": {
+          "id": "4",
+          "name": "Neo4j account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "raw",
+        "query": "=MATCH (u:User {telegram_id: $user_id})\nOPTIONAL MATCH (u)-[:CREATED]->(n:Note)\nOPTIONAL MATCH (u)-[:CREATED]->(t:Task)\nOPTIONAL MATCH (u)-[:CREATED]->(r:Reminder)\nRETURN\n  count(DISTINCT n) as notes_count,\n  count(DISTINCT t) as tasks_count,\n  count(DISTINCT r) as reminders_count",
+        "parameters": {
+          "parameters": [
+            {
+              "name": "user_id",
+              "value": "={{ $node[\"Parse Message\"].json.user_id }}"
+            }
+          ]
+        }
+      },
+      "id": "stats-operation",
+      "name": "Get Stats from Neo4j",
+      "type": "n8n-nodes-base.neo4j",
+      "typeVersion": 1,
+      "position": [1120, 650],
+      "credentials": {
+        "neo4j": {
+          "id": "4",
+          "name": "Neo4j account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const messageData = $node[\"Parse Message\"].json;\nconst result = items[0].json;\n\n// Delete pending from Redis if exists\nif (messageData.pending_id) {\n  // Will be handled by separate node\n}\n\nreturn {\n  chat_id: messageData.chat_id,\n  text: `✅ Сохранено!\\n\\nID: ${result.n.id.substring(0, 8)}...`\n};"
+      },
+      "id": "format-save-response",
+      "name": "Format Save Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1340, 200]
+    },
+    {
+      "parameters": {
+        "jsCode": "const messageData = $node[\"Parse Message\"].json;\nconst results = items;\n\nif (results.length === 0) {\n  return {\n    chat_id: messageData.chat_id,\n    text: '🔍 Ничего не найдено'\n  };\n}\n\nlet text = `🔍 Найдено: ${results.length}\\n\\n`;\n\nresults.forEach((item, index) => {\n  const n = item.json.n;\n  text += `${index + 1}. ${n.improved_text || n.text}\\n`;\n  text += `   ID: ${n.id.substring(0, 8)}...\\n\\n`;\n});\n\nreturn {\n  chat_id: messageData.chat_id,\n  text: text\n};"
+      },
+      "id": "format-search-response",
+      "name": "Format Search Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1340, 350]
+    },
+    {
+      "parameters": {
+        "jsCode": "const messageData = $node[\"Parse Message\"].json;\nconst result = items[0].json;\n\nreturn {\n  chat_id: messageData.chat_id,\n  text: result.deleted > 0 ? '🗑 Удалено!' : '❌ Не найдено'\n};"
+      },
+      "id": "format-delete-response",
+      "name": "Format Delete Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1340, 500]
+    },
+    {
+      "parameters": {
+        "jsCode": "const messageData = $node[\"Parse Message\"].json;\nconst stats = items[0].json;\n\nconst text = `📊 Статистика:\\n\\n` +\n  `📝 Заметок: ${stats.notes_count}\\n` +\n  `✅ Задач: ${stats.tasks_count}\\n` +\n  `⏰ Напоминаний: ${stats.reminders_count}`;\n\nreturn {\n  chat_id: messageData.chat_id,\n  text: text\n};"
+      },
+      "id": "format-stats-response",
+      "name": "Format Stats Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1340, 650]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.telegram.org/bot{{ $env.TELEGRAM_BOT_TOKEN }}/sendMessage",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json }}",
+        "options": {}
+      },
+      "id": "send-response",
+      "name": "Send Response to Telegram",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [1560, 400]
+    },
+    {
+      "parameters": {
+        "operation": "delete",
+        "key": "=pending:{{ $node[\"Parse Message\"].json.pending_id }}"
+      },
+      "id": "delete-pending-redis",
+      "name": "Delete Pending from Redis",
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
+      "position": [1340, 100],
+      "credentials": {
+        "redis": {
+          "id": "3",
+          "name": "Redis account"
+        }
+      },
+      "executeOnce": false,
+      "alwaysOutputData": true,
+      "continueOnFail": true
+    }
+  ],
+  "connections": {
+    "RabbitMQ Trigger - db_ops": {
+      "main": [
+        [
+          {
+            "node": "Parse Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Message": {
+      "main": [
+        [
+          {
+            "node": "Ensure User Exists",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ensure User Exists": {
+      "main": [
+        [
+          {
+            "node": "Switch by Operation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Switch by Operation": {
+      "main": [
+        [
+          {
+            "node": "Save to Neo4j",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Search in Neo4j",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Delete from Neo4j",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Get Stats from Neo4j",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save to Neo4j": {
+      "main": [
+        [
+          {
+            "node": "Format Save Response",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Delete Pending from Redis",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Search in Neo4j": {
+      "main": [
+        [
+          {
+            "node": "Format Search Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Delete from Neo4j": {
+      "main": [
+        [
+          {
+            "node": "Format Delete Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Stats from Neo4j": {
+      "main": [
+        [
+          {
+            "node": "Format Stats Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Save Response": {
+      "main": [
+        [
+          {
+            "node": "Send Response to Telegram",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Search Response": {
+      "main": [
+        [
+          {
+            "node": "Send Response to Telegram",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Delete Response": {
+      "main": [
+        [
+          {
+            "node": "Send Response to Telegram",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Stats Response": {
+      "main": [
+        [
+          {
+            "node": "Send Response to Telegram",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 0,
+  "updatedAt": "2025-11-08T16:35:00.000Z",
+  "versionId": "1"
+}

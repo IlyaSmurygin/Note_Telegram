@@ -1,0 +1,190 @@
+{
+  "name": "05 - Pending Action (User Confirmation)",
+  "nodes": [
+    {
+      "parameters": {
+        "queue": "pending_action",
+        "options": {
+          "acknowledge": "immediatelyAfterMessageReceived"
+        }
+      },
+      "id": "rabbitmq-trigger",
+      "name": "RabbitMQ Trigger - pending_action",
+      "type": "n8n-nodes-base.rabbitmqTrigger",
+      "typeVersion": 1,
+      "position": [240, 300],
+      "credentials": {
+        "rabbitmq": {
+          "id": "1",
+          "name": "RabbitMQ account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse incoming message\nconst message = JSON.parse($input.item.json.content.toString());\n\nreturn message;"
+      },
+      "id": "parse-message",
+      "name": "Parse Message",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Generate unique pending ID\nconst crypto = require('crypto');\nconst pending_id = crypto.randomUUID();\n\nreturn {\n  ...items[0].json,\n  pending_id: pending_id\n};"
+      },
+      "id": "generate-pending-id",
+      "name": "Generate Pending ID",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "operation": "set",
+        "key": "=pending:{{ $json.pending_id }}",
+        "value": "={{ JSON.stringify($json) }}",
+        "options": {
+          "ttl": 3600
+        }
+      },
+      "id": "save-to-redis",
+      "name": "Save to Redis",
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
+      "position": [900, 300],
+      "credentials": {
+        "redis": {
+          "id": "3",
+          "name": "Redis account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Generate inline keyboard for Telegram\nconst pending_id = items[0].json.pending_id;\nconst data = items[0].json;\n\n// Format message text based on type\nlet messageText = '';\nconst typeEmoji = {\n  'note': '📝',\n  'task': '✅',\n  'reminder': '⏰'\n};\n\nconst emoji = typeEmoji[data.type] || '📌';\n\nmessageText = `${emoji} Создать ${data.type}?\\n\\n`;\nmessageText += `${data.improved_text}\\n\\n`;\n\nif (data.tags && data.tags.length > 0) {\n  messageText += `🏷 Теги: ${data.tags.join(', ')}\\n`;\n}\n\nreturn {\n  chat_id: data.chat_id,\n  text: messageText,\n  reply_markup: {\n    inline_keyboard: [\n      [\n        { text: \"✅ Сохранить\", callback_data: `save:${pending_id}` },\n        { text: \"❌ Отменить\", callback_data: `cancel:${pending_id}` }\n      ]\n    ]\n  }\n};"
+      },
+      "id": "prepare-telegram-message",
+      "name": "Prepare Telegram Message",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1120, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.telegram.org/bot{{ $env.TELEGRAM_BOT_TOKEN }}/sendMessage",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json }}",
+        "options": {}
+      },
+      "id": "send-telegram-message",
+      "name": "Send to Telegram",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [1340, 300]
+    },
+    {
+      "parameters": {
+        "queue": "log_events",
+        "options": {
+          "durable": true
+        },
+        "sendInputData": false,
+        "messageData": "={{ {\n  \"event\": \"pending_action_created\",\n  \"pending_id\": $node[\"Generate Pending ID\"].json.pending_id,\n  \"user_id\": $node[\"Generate Pending ID\"].json.user_id,\n  \"type\": $node[\"Generate Pending ID\"].json.type,\n  \"timestamp\": $now\n} }}"
+      },
+      "id": "log-event",
+      "name": "Log Event",
+      "type": "n8n-nodes-base.rabbitmq",
+      "typeVersion": 1,
+      "position": [1340, 450],
+      "credentials": {
+        "rabbitmq": {
+          "id": "1",
+          "name": "RabbitMQ account"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "RabbitMQ Trigger - pending_action": {
+      "main": [
+        [
+          {
+            "node": "Parse Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Message": {
+      "main": [
+        [
+          {
+            "node": "Generate Pending ID",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Pending ID": {
+      "main": [
+        [
+          {
+            "node": "Save to Redis",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save to Redis": {
+      "main": [
+        [
+          {
+            "node": "Prepare Telegram Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Telegram Message": {
+      "main": [
+        [
+          {
+            "node": "Send to Telegram",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Log Event",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 0,
+  "updatedAt": "2025-11-08T16:25:00.000Z",
+  "versionId": "1"
+}

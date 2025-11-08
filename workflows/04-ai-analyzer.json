@@ -1,0 +1,251 @@
+{
+  "name": "04 - AI Analyzer (GPT-4)",
+  "nodes": [
+    {
+      "parameters": {
+        "queue": "ai_analyze",
+        "options": {
+          "acknowledge": "immediatelyAfterMessageReceived"
+        }
+      },
+      "id": "rabbitmq-trigger",
+      "name": "RabbitMQ Trigger - ai_analyze",
+      "type": "n8n-nodes-base.rabbitmqTrigger",
+      "typeVersion": 1,
+      "position": [240, 300],
+      "credentials": {
+        "rabbitmq": {
+          "id": "1",
+          "name": "RabbitMQ account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse incoming message\nconst message = JSON.parse($input.item.json.content.toString());\n\nreturn {\n  user_id: message.user_id,\n  chat_id: message.chat_id,\n  text: message.text,\n  type: message.type || 'text',\n  message_id: message.message_id\n};"
+      },
+      "id": "parse-message",
+      "name": "Parse Message",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/chat/completions",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "openAiApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "model",
+              "value": "gpt-4o-mini"
+            },
+            {
+              "name": "messages",
+              "value": "={{ [{\n  \"role\": \"system\",\n  \"content\": \"Ты ассистент для анализа сообщений пользователя.\\n\\nТвоя задача - классифицировать входящий текст и вернуть ТОЛЬКО валидный JSON без дополнительного текста.\\n\\nТипы объектов:\\n- note: обычная заметка\\n- task: задача с возможным сроком\\n- reminder: напоминание с датой/временем\\n- command: команда пользователя (найти, удалить, связать, статистика)\\n\\nДля команд определи тип:\\n- search: поиск заметок\\n- delete: удаление\\n- link: связывание объектов\\n- update: обновление\\n- stats: статистика\\n\\nУлучши текст, сделай его более структурированным. Извлеки теги (ключевые слова).\\n\\nФормат ответа (строго JSON):\\n{\\n  \\\"type\\\": \\\"note|task|reminder|command\\\",\\n  \\\"improved_text\\\": \\\"улучшенный текст\\\",\\n  \\\"tags\\\": [\\\"тег1\\\", \\\"тег2\\\"],\\n  \\\"command_type\\\": \\\"search|delete|link|update|stats или null\\\",\\n  \\\"command_params\\\": {}\\n}\"\n}, {\n  \"role\": \"user\",\n  \"content\": $json.text\n}] }}"
+            },
+            {
+              "name": "temperature",
+              "value": "0.3"
+            },
+            {
+              "name": "max_tokens",
+              "value": "1000"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "gpt4-analyze",
+      "name": "GPT-4 Analyze",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [680, 300],
+      "credentials": {
+        "openAiApi": {
+          "id": "2",
+          "name": "OpenAI account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extract and parse AI response\nconst aiResponse = $json.choices[0].message.content;\nconst userData = $node[\"Parse Message\"].json;\n\n// Parse JSON from AI response\nlet analyzed;\ntry {\n  // Try to extract JSON if wrapped in markdown\n  const jsonMatch = aiResponse.match(/\\{[\\s\\S]*\\}/);\n  analyzed = JSON.parse(jsonMatch ? jsonMatch[0] : aiResponse);\n} catch (error) {\n  // Fallback if parsing fails\n  analyzed = {\n    type: 'note',\n    improved_text: userData.text,\n    tags: [],\n    command_type: null,\n    command_params: {}\n  };\n}\n\nreturn {\n  user_id: userData.user_id,\n  chat_id: userData.chat_id,\n  message_id: userData.message_id,\n  original_text: userData.text,\n  type: analyzed.type,\n  improved_text: analyzed.improved_text,\n  tags: analyzed.tags || [],\n  command_type: analyzed.command_type || null,\n  command_params: analyzed.command_params || {}\n};"
+      },
+      "id": "parse-ai-response",
+      "name": "Parse AI Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [900, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ $json.type }}",
+              "value2": "command"
+            }
+          ]
+        }
+      },
+      "id": "is-command",
+      "name": "Is Command?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [1120, 300]
+    },
+    {
+      "parameters": {
+        "queue": "db_ops",
+        "options": {
+          "durable": true
+        },
+        "sendInputData": false,
+        "messageData": "={{ {\n  \"operation\": $json.command_type,\n  \"user_id\": $json.user_id,\n  \"chat_id\": $json.chat_id,\n  \"params\": $json.command_params\n} }}"
+      },
+      "id": "to-db-ops",
+      "name": "To db_ops Queue",
+      "type": "n8n-nodes-base.rabbitmq",
+      "typeVersion": 1,
+      "position": [1340, 200],
+      "credentials": {
+        "rabbitmq": {
+          "id": "1",
+          "name": "RabbitMQ account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "queue": "pending_action",
+        "options": {
+          "durable": true
+        },
+        "sendInputData": false,
+        "messageData": "={{ $json }}"
+      },
+      "id": "to-pending-action",
+      "name": "To pending_action Queue",
+      "type": "n8n-nodes-base.rabbitmq",
+      "typeVersion": 1,
+      "position": [1340, 400],
+      "credentials": {
+        "rabbitmq": {
+          "id": "1",
+          "name": "RabbitMQ account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "queue": "log_events",
+        "options": {
+          "durable": true
+        },
+        "sendInputData": false,
+        "messageData": "={{ {\n  \"event\": \"ai_analyzed\",\n  \"user_id\": $json.user_id,\n  \"type\": $json.type,\n  \"timestamp\": $now\n} }}"
+      },
+      "id": "log-event",
+      "name": "Log Event",
+      "type": "n8n-nodes-base.rabbitmq",
+      "typeVersion": 1,
+      "position": [1340, 600],
+      "credentials": {
+        "rabbitmq": {
+          "id": "1",
+          "name": "RabbitMQ account"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "RabbitMQ Trigger - ai_analyze": {
+      "main": [
+        [
+          {
+            "node": "Parse Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Message": {
+      "main": [
+        [
+          {
+            "node": "GPT-4 Analyze",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GPT-4 Analyze": {
+      "main": [
+        [
+          {
+            "node": "Parse AI Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse AI Response": {
+      "main": [
+        [
+          {
+            "node": "Is Command?",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Log Event",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Command?": {
+      "main": [
+        [
+          {
+            "node": "To db_ops Queue",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "To pending_action Queue",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 0,
+  "updatedAt": "2025-11-08T16:20:00.000Z",
+  "versionId": "1"
+}

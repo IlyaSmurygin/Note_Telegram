@@ -1,0 +1,269 @@
+{
+  "name": "06 - Callback Processor (Button Clicks)",
+  "nodes": [
+    {
+      "parameters": {
+        "queue": "callback_input",
+        "options": {
+          "acknowledge": "immediatelyAfterMessageReceived"
+        }
+      },
+      "id": "rabbitmq-trigger",
+      "name": "RabbitMQ Trigger - callback_input",
+      "type": "n8n-nodes-base.rabbitmqTrigger",
+      "typeVersion": 1,
+      "position": [240, 300],
+      "credentials": {
+        "rabbitmq": {
+          "id": "1",
+          "name": "RabbitMQ account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse incoming message\nconst message = JSON.parse($input.item.json.content.toString());\n\n// Parse callback_data (format: \"action:pending_id\")\nconst [action, pending_id] = message.callback_data.split(':');\n\nreturn {\n  user_id: message.user_id,\n  chat_id: message.chat_id,\n  callback_id: message.callback_id,\n  message_id: message.message_id,\n  action: action,\n  pending_id: pending_id\n};"
+      },
+      "id": "parse-callback",
+      "name": "Parse Callback Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "operation": "get",
+        "key": "=pending:{{ $json.pending_id }}"
+      },
+      "id": "get-from-redis",
+      "name": "Get Pending Data from Redis",
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
+      "position": [680, 300],
+      "credentials": {
+        "redis": {
+          "id": "3",
+          "name": "Redis account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse pending data from Redis\nconst callbackData = $node[\"Parse Callback Data\"].json;\nconst pendingDataStr = $json.value;\n\nif (!pendingDataStr) {\n  throw new Error('Pending data not found or expired');\n}\n\nconst pendingData = JSON.parse(pendingDataStr);\n\nreturn {\n  ...callbackData,\n  ...pendingData\n};"
+      },
+      "id": "merge-data",
+      "name": "Merge with Callback Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [900, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ $json.action }}",
+              "value2": "save"
+            }
+          ]
+        }
+      },
+      "id": "check-action",
+      "name": "Action Type?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [1120, 300]
+    },
+    {
+      "parameters": {
+        "queue": "db_ops",
+        "options": {
+          "durable": true
+        },
+        "sendInputData": false,
+        "messageData": "={{ {\n  \"operation\": \"save\",\n  \"user_id\": $json.user_id,\n  \"chat_id\": $json.chat_id,\n  \"type\": $json.type,\n  \"text\": $json.original_text,\n  \"improved_text\": $json.improved_text,\n  \"tags\": $json.tags,\n  \"pending_id\": $json.pending_id\n} }}"
+      },
+      "id": "to-db-save",
+      "name": "To db_ops (Save)",
+      "type": "n8n-nodes-base.rabbitmq",
+      "typeVersion": 1,
+      "position": [1340, 200],
+      "credentials": {
+        "rabbitmq": {
+          "id": "1",
+          "name": "RabbitMQ account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "delete",
+        "key": "=pending:{{ $json.pending_id }}"
+      },
+      "id": "delete-from-redis-cancel",
+      "name": "Delete from Redis (Cancel)",
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
+      "position": [1340, 400],
+      "credentials": {
+        "redis": {
+          "id": "3",
+          "name": "Redis account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.telegram.org/bot{{ $env.TELEGRAM_BOT_TOKEN }}/answerCallbackQuery",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ {\n  \"callback_query_id\": $node[\"Parse Callback Data\"].json.callback_id,\n  \"text\": $node[\"Parse Callback Data\"].json.action === 'save' ? '✅ Сохранено!' : '❌ Отменено'\n} }}",
+        "options": {}
+      },
+      "id": "answer-callback",
+      "name": "Answer Callback Query",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [1560, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.telegram.org/bot{{ $env.TELEGRAM_BOT_TOKEN }}/editMessageReplyMarkup",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ {\n  \"chat_id\": $node[\"Parse Callback Data\"].json.chat_id,\n  \"message_id\": $node[\"Parse Callback Data\"].json.message_id,\n  \"reply_markup\": { \"inline_keyboard\": [] }\n} }}",
+        "options": {}
+      },
+      "id": "remove-keyboard",
+      "name": "Remove Keyboard",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [1780, 300]
+    }
+  ],
+  "connections": {
+    "RabbitMQ Trigger - callback_input": {
+      "main": [
+        [
+          {
+            "node": "Parse Callback Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Callback Data": {
+      "main": [
+        [
+          {
+            "node": "Get Pending Data from Redis",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Pending Data from Redis": {
+      "main": [
+        [
+          {
+            "node": "Merge with Callback Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge with Callback Data": {
+      "main": [
+        [
+          {
+            "node": "Action Type?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Action Type?": {
+      "main": [
+        [
+          {
+            "node": "To db_ops (Save)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Delete from Redis (Cancel)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "To db_ops (Save)": {
+      "main": [
+        [
+          {
+            "node": "Answer Callback Query",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Delete from Redis (Cancel)": {
+      "main": [
+        [
+          {
+            "node": "Answer Callback Query",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Answer Callback Query": {
+      "main": [
+        [
+          {
+            "node": "Remove Keyboard",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 0,
+  "updatedAt": "2025-11-08T16:30:00.000Z",
+  "versionId": "1"
+}
