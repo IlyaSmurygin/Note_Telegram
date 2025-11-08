@@ -1,0 +1,486 @@
+{
+  "name": "07 - DB Operations (HTTP API)",
+  "nodes": [
+    {
+      "parameters": {
+        "queue": "db_ops",
+        "options": {
+          "acknowledge": "immediatelyAfterMessageReceived"
+        }
+      },
+      "id": "rabbitmq-trigger",
+      "name": "RabbitMQ Trigger - db_ops",
+      "type": "n8n-nodes-base.rabbitmqTrigger",
+      "typeVersion": 1,
+      "position": [240, 400],
+      "credentials": {
+        "rabbitmq": {
+          "id": "1",
+          "name": "RabbitMQ account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse incoming message\nconst message = JSON.parse($input.item.json.content.toString());\n\nreturn message;"
+      },
+      "id": "parse-message",
+      "name": "Parse Message",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 400]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://neo4j:7474/db/neo4j/tx/commit",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ {\n  \"statements\": [{\n    \"statement\": \"MERGE (u:User {telegram_id: $user_id}) ON CREATE SET u.created_at = datetime() RETURN u\",\n    \"parameters\": {\n      \"user_id\": $json.user_id\n    }\n  }]\n} }}",
+        "options": {}
+      },
+      "id": "ensure-user",
+      "name": "Ensure User Exists",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [680, 400],
+      "credentials": {
+        "httpBasicAuth": {
+          "id": "5",
+          "name": "Neo4j Basic Auth"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ $node[\"Parse Message\"].json.operation }}",
+              "value2": "save"
+            }
+          ]
+        }
+      },
+      "id": "is-save",
+      "name": "Is Save?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [900, 250]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ $node[\"Parse Message\"].json.operation }}",
+              "value2": "search"
+            }
+          ]
+        }
+      },
+      "id": "is-search",
+      "name": "Is Search?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [900, 400]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ $node[\"Parse Message\"].json.operation }}",
+              "value2": "stats"
+            }
+          ]
+        }
+      },
+      "id": "is-stats",
+      "name": "Is Stats?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [900, 550]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://neo4j:7474/db/neo4j/tx/commit",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ {\n  \"statements\": [{\n    \"statement\": \"MATCH (u:User {telegram_id: $user_id}) CREATE (n:Note { id: randomUUID(), text: $text, improved_text: $improved_text, created_at: datetime() }) CREATE (u)-[:CREATED]->(n) WITH n UNWIND $tags AS tag_name MERGE (t:Tag {name: tag_name}) CREATE (n)-[:TAGGED_WITH]->(t) RETURN n\",\n    \"parameters\": {\n      \"user_id\": $node[\"Parse Message\"].json.user_id,\n      \"text\": $node[\"Parse Message\"].json.text,\n      \"improved_text\": $node[\"Parse Message\"].json.improved_text,\n      \"tags\": $node[\"Parse Message\"].json.tags || []\n    }\n  }]\n} }}",
+        "options": {}
+      },
+      "id": "save-neo4j",
+      "name": "Save to Neo4j",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [1120, 150],
+      "credentials": {
+        "httpBasicAuth": {
+          "id": "5",
+          "name": "Neo4j Basic Auth"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://neo4j:7474/db/neo4j/tx/commit",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ {\n  \"statements\": [{\n    \"statement\": \"MATCH (u:User {telegram_id: $user_id})-[:CREATED]->(n) RETURN n ORDER BY n.created_at DESC LIMIT 10\",\n    \"parameters\": {\n      \"user_id\": $node[\"Parse Message\"].json.user_id\n    }\n  }]\n} }}",
+        "options": {}
+      },
+      "id": "search-neo4j",
+      "name": "Search in Neo4j",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [1120, 350],
+      "credentials": {
+        "httpBasicAuth": {
+          "id": "5",
+          "name": "Neo4j Basic Auth"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://neo4j:7474/db/neo4j/tx/commit",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ {\n  \"statements\": [{\n    \"statement\": \"MATCH (u:User {telegram_id: $user_id}) OPTIONAL MATCH (u)-[:CREATED]->(n:Note) OPTIONAL MATCH (u)-[:CREATED]->(t:Task) OPTIONAL MATCH (u)-[:CREATED]->(r:Reminder) RETURN count(DISTINCT n) as notes_count, count(DISTINCT t) as tasks_count, count(DISTINCT r) as reminders_count\",\n    \"parameters\": {\n      \"user_id\": $node[\"Parse Message\"].json.user_id\n    }\n  }]\n} }}",
+        "options": {}
+      },
+      "id": "stats-neo4j",
+      "name": "Get Stats from Neo4j",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [1120, 550],
+      "credentials": {
+        "httpBasicAuth": {
+          "id": "5",
+          "name": "Neo4j Basic Auth"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const messageData = $node[\"Parse Message\"].json;\nconst neo4jResult = $json.results[0];\n\nif (!neo4jResult || !neo4jResult.data || neo4jResult.data.length === 0) {\n  return {\n    chat_id: messageData.chat_id,\n    text: '❌ Ошибка сохранения'\n  };\n}\n\nconst nodeData = neo4jResult.data[0].row[0];\n\nreturn {\n  chat_id: messageData.chat_id,\n  text: `✅ Сохранено!\\n\\nID: ${nodeData.id.substring(0, 8)}...`,\n  pending_id: messageData.pending_id\n};"
+      },
+      "id": "format-save",
+      "name": "Format Save Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1340, 150]
+    },
+    {
+      "parameters": {
+        "jsCode": "const messageData = $node[\"Parse Message\"].json;\nconst neo4jResult = $json.results[0];\n\nif (!neo4jResult || !neo4jResult.data || neo4jResult.data.length === 0) {\n  return {\n    chat_id: messageData.chat_id,\n    text: '🔍 Ничего не найдено'\n  };\n}\n\nlet text = `🔍 Найдено: ${neo4jResult.data.length}\\n\\n`;\n\nneo4jResult.data.forEach((item, index) => {\n  const n = item.row[0];\n  text += `${index + 1}. ${n.improved_text || n.text}\\n`;\n  text += `   ID: ${n.id.substring(0, 8)}...\\n\\n`;\n});\n\nreturn {\n  chat_id: messageData.chat_id,\n  text: text\n};"
+      },
+      "id": "format-search",
+      "name": "Format Search Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1340, 350]
+    },
+    {
+      "parameters": {
+        "jsCode": "const messageData = $node[\"Parse Message\"].json;\nconst neo4jResult = $json.results[0];\n\nif (!neo4jResult || !neo4jResult.data || neo4jResult.data.length === 0) {\n  return {\n    chat_id: messageData.chat_id,\n    text: '❌ Ошибка получения статистики'\n  };\n}\n\nconst stats = neo4jResult.data[0].row[0];\n\nconst text = `📊 Статистика:\\n\\n` +\n  `📝 Заметок: ${stats.notes_count || 0}\\n` +\n  `✅ Задач: ${stats.tasks_count || 0}\\n` +\n  `⏰ Напоминаний: ${stats.reminders_count || 0}`;\n\nreturn {\n  chat_id: messageData.chat_id,\n  text: text\n};"
+      },
+      "id": "format-stats",
+      "name": "Format Stats Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1340, 550]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ $json.pending_id }}",
+              "operation": "isNotEmpty"
+            }
+          ]
+        }
+      },
+      "id": "has-pending",
+      "name": "Has Pending?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [1560, 150]
+    },
+    {
+      "parameters": {
+        "operation": "delete",
+        "key": "=pending:{{ $json.pending_id }}"
+      },
+      "id": "delete-pending",
+      "name": "Delete from Redis",
+      "type": "n8n-nodes-base.redis",
+      "typeVersion": 1,
+      "position": [1780, 50],
+      "credentials": {
+        "redis": {
+          "id": "3",
+          "name": "Redis account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.telegram.org/bot{{ $env.TELEGRAM_BOT_TOKEN }}/sendMessage",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { \"chat_id\": $json.chat_id, \"text\": $json.text } }}",
+        "options": {}
+      },
+      "id": "send-telegram",
+      "name": "Send to Telegram",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [1780, 350]
+    }
+  ],
+  "connections": {
+    "RabbitMQ Trigger - db_ops": {
+      "main": [
+        [
+          {
+            "node": "Parse Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Message": {
+      "main": [
+        [
+          {
+            "node": "Ensure User Exists",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ensure User Exists": {
+      "main": [
+        [
+          {
+            "node": "Is Save?",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Is Search?",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Is Stats?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Save?": {
+      "main": [
+        [
+          {
+            "node": "Save to Neo4j",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Search?": {
+      "main": [
+        [
+          {
+            "node": "Search in Neo4j",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Stats?": {
+      "main": [
+        [
+          {
+            "node": "Get Stats from Neo4j",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save to Neo4j": {
+      "main": [
+        [
+          {
+            "node": "Format Save Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Search in Neo4j": {
+      "main": [
+        [
+          {
+            "node": "Format Search Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Stats from Neo4j": {
+      "main": [
+        [
+          {
+            "node": "Format Stats Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Save Response": {
+      "main": [
+        [
+          {
+            "node": "Has Pending?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Search Response": {
+      "main": [
+        [
+          {
+            "node": "Send to Telegram",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Stats Response": {
+      "main": [
+        [
+          {
+            "node": "Send to Telegram",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Pending?": {
+      "main": [
+        [
+          {
+            "node": "Delete from Redis",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send to Telegram",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Delete from Redis": {
+      "main": [
+        [
+          {
+            "node": "Send to Telegram",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 0,
+  "updatedAt": "2025-11-08T17:00:00.000Z",
+  "versionId": "1"
+}
