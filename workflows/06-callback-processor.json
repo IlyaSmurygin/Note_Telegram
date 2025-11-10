@@ -22,7 +22,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Parse incoming message\nconst message = JSON.parse($input.item.json.content.toString());\n\n// Parse callback_data (format: \"action:pending_id\")\nconst [action, pending_id] = message.callback_data.split(':');\n\nreturn {\n  user_id: message.user_id,\n  chat_id: message.chat_id,\n  callback_id: message.callback_id,\n  message_id: message.message_id,\n  action: action,\n  pending_id: pending_id\n};"
+        "jsCode": "// Parse RabbitMQ callback message\nlet contentStr;\n\nif ($input.item.json.content) {\n  contentStr = Buffer.isBuffer($input.item.json.content) \n    ? $input.item.json.content.toString() \n    : $input.item.json.content;\n} else {\n  contentStr = JSON.stringify($input.item.json);\n}\n\n// Remove leading '=' if present (expression not evaluated)\nif (contentStr.startsWith('=')) {\n  contentStr = contentStr.substring(1);\n}\n\n// Parse JSON\nconst message = JSON.parse(contentStr);\n\n// Parse callback_data (format: \"action:pending_id\")\nconst [action, pending_id] = message.callback_data.split(':');\n\nreturn {\n  user_id: message.user_id,\n  chat_id: message.chat_id,\n  callback_id: message.callback_id,\n  message_id: message.message_id,\n  action: action,\n  pending_id: pending_id\n};"
       },
       "id": "parse-callback",
       "name": "Parse Callback Data",
