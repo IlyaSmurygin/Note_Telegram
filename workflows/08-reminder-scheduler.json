@@ -49,7 +49,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ {\n  \"statements\": [{\n    \"statement\": \"MATCH (u:User)-[:CREATED]->(r:Reminder) WHERE r.scheduled_datetime <= datetime() AND (r.sent IS NULL OR r.sent = false) RETURN r.id as reminder_id, u.telegram_id as user_id, r.improved_text as text, r.original_text as original_text, r.scheduled_datetime as scheduled_for ORDER BY r.scheduled_datetime ASC LIMIT 50\",\n    \"parameters\": {}\n  }]\n} }}",
+        "jsonBody": "={{ {\n  \"statements\": [{\n    \"statement\": \"MATCH (u:User)-[:CREATED]->(r:Reminder) WHERE r.remind_at <= datetime() AND r.status = 'pending' RETURN r.id as reminder_id, u.telegram_id as user_id, r.text as text, r.original_text as original_text, r.remind_at as scheduled_for ORDER BY r.remind_at ASC LIMIT 50\",\n    \"parameters\": {}\n  }]\n} }}",
         "options": {}
       },
       "id": "find-reminders",
@@ -143,7 +143,7 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ {\n  \"statements\": [{\n    \"statement\": \"MATCH (r:Reminder {id: $reminder_id}) SET r.sent = true, r.sent_at = datetime() RETURN r\",\n    \"parameters\": {\n      \"reminder_id\": $node[\"Prepare Telegram Message\"].json.reminder_id\n    }\n  }]\n} }}",
+        "jsonBody": "={{ {\n  \"statements\": [{\n    \"statement\": \"MATCH (r:Reminder {id: $reminder_id}) SET r.status = 'sent', r.sent_at = datetime() RETURN r\",\n    \"parameters\": {\n      \"reminder_id\": $node[\"Prepare Telegram Message\"].json.reminder_id\n    }\n  }]\n} }}",
         "options": {}
       },
       "id": "mark-as-sent",
