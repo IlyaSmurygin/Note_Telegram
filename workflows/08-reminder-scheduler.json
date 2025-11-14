@@ -1,0 +1,249 @@
+{
+  "name": "08 - Reminder Scheduler",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 1
+            }
+          ]
+        }
+      },
+      "id": "schedule-trigger",
+      "name": "Schedule Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.1,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Get current datetime in ISO format\nconst now = new Date();\nconst isoString = now.toISOString();\n\nreturn {\n  current_datetime: isoString,\n  timestamp: now.getTime()\n};"
+      },
+      "id": "get-current-time",
+      "name": "Get Current DateTime",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://neo4j:7474/db/neo4j/tx/commit",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ {\n  \"statements\": [{\n    \"statement\": \"MATCH (u:User)-[:CREATED]->(r:Reminder) WHERE r.scheduled_datetime <= datetime() AND (r.sent IS NULL OR r.sent = false) RETURN r.id as reminder_id, u.telegram_id as user_id, r.improved_text as text, r.original_text as original_text, r.scheduled_datetime as scheduled_for ORDER BY r.scheduled_datetime ASC LIMIT 50\",\n    \"parameters\": {}\n  }]\n} }}",
+        "options": {}
+      },
+      "id": "find-reminders",
+      "name": "Find Ready Reminders",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [680, 300],
+      "credentials": {
+        "httpBasicAuth": {
+          "id": "5",
+          "name": "Neo4j Basic Auth"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse Neo4j response and extract reminders\nconst neo4jResult = $json.results[0];\n\nif (!neo4jResult || !neo4jResult.data || neo4jResult.data.length === 0) {\n  return [];\n}\n\n// Convert to array of reminder objects\nreturn neo4jResult.data.map(item => {\n  const row = item.row;\n  return {\n    reminder_id: row[0],\n    user_id: row[1],\n    text: row[2],\n    original_text: row[3],\n    scheduled_for: row[4]\n  };\n});"
+      },
+      "id": "parse-reminders",
+      "name": "Parse Reminders",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [900, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "number": [
+            {
+              "value1": "={{ $json.length }}",
+              "operation": "larger",
+              "value2": 0
+            }
+          ]
+        }
+      },
+      "id": "has-reminders",
+      "name": "Has Reminders?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [1120, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Prepare Telegram message for reminder\nconst reminder = $json;\n\nconst text = `⏰ Напоминание:\\n\\n${reminder.text || reminder.original_text}`;\n\nreturn {\n  chat_id: String(reminder.user_id),\n  text: text,\n  reminder_id: reminder.reminder_id\n};"
+      },
+      "id": "prepare-telegram-message",
+      "name": "Prepare Telegram Message",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1340, 200]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.telegram.org/bot{{ $env.TELEGRAM_BOT_TOKEN }}/sendMessage",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ {\n  \"chat_id\": $json.chat_id,\n  \"text\": $json.text\n} }}",
+        "options": {}
+      },
+      "id": "send-to-telegram",
+      "name": "Send to Telegram",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [1560, 200]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://neo4j:7474/db/neo4j/tx/commit",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ {\n  \"statements\": [{\n    \"statement\": \"MATCH (r:Reminder {id: $reminder_id}) SET r.sent = true, r.sent_at = datetime() RETURN r\",\n    \"parameters\": {\n      \"reminder_id\": $node[\"Prepare Telegram Message\"].json.reminder_id\n    }\n  }]\n} }}",
+        "options": {}
+      },
+      "id": "mark-as-sent",
+      "name": "Mark as Sent",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [1780, 200],
+      "credentials": {
+        "httpBasicAuth": {
+          "id": "5",
+          "name": "Neo4j Basic Auth"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "Get Current DateTime",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Current DateTime": {
+      "main": [
+        [
+          {
+            "node": "Find Ready Reminders",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find Ready Reminders": {
+      "main": [
+        [
+          {
+            "node": "Parse Reminders",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Reminders": {
+      "main": [
+        [
+          {
+            "node": "Has Reminders?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Reminders?": {
+      "main": [
+        [
+          {
+            "node": "Prepare Telegram Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Telegram Message": {
+      "main": [
+        [
+          {
+            "node": "Send to Telegram",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send to Telegram": {
+      "main": [
+        [
+          {
+            "node": "Mark as Sent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 0,
+  "updatedAt": "2025-11-14T00:00:00.000Z",
+  "versionId": "1"
+}
