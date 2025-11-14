@@ -1,0 +1,31 @@
+{
+  "name": "Main Workflow - Complete System",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "telegram",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "cb75c8d9-5af8-49b2-a353-06f74b872263",
+      "name": "Telegram Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [
+        -880,
+        304
+      ],
+      "webhookId": "telegram-webhook"
+    }
+  ],
+  "connections": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 0,
+  "updatedAt": "2025-11-14T16:30:00.000Z",
+  "versionId": "1"
+}
