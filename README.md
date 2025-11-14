@@ -137,6 +137,8 @@ bash scripts/07-setup-nginx-ssl.sh
    - `06-callback-processor.json` - обработка callback-кнопок
    - `07-db-operations-http-api.json` - операции с Neo4j
    - `08-reminder-scheduler.json` - планировщик напоминаний
+   - `09-log-processor.json` - обработка событий логирования
+   - `10-error-handler.json` - обработка ошибок системы
 
 4. Активируйте все workflows
 
@@ -174,6 +176,18 @@ Find Ready Reminders
 Send to User
     ↓
 Delete Reminder
+```
+
+### Обработка логов и ошибок
+
+```
+Log Events Queue (09)          Error Events Queue (10)
+    ↓                              ↓
+Parse Log Message              Parse Error Message
+    ↓                              ↓
+Save to Neo4j                  Save to Neo4j
+    ↓                              ↓
+Console Output                 Console Error Output
 ```
 
 ## Использование
@@ -313,6 +327,35 @@ docker exec -it redis-notes redis-cli PING
 Проверьте что webhook настроен правильно:
 ```bash
 curl https://api.telegram.org/bot<TOKEN>/getWebhookInfo
+```
+
+### Просмотр логов и ошибок
+
+Проверьте логи событий в Neo4j:
+```cypher
+// Последние 10 событий логирования
+MATCH (l:Log)
+RETURN l.event, l.timestamp, l.data
+ORDER BY l.timestamp DESC
+LIMIT 10
+
+// Последние ошибки
+MATCH (e:Error)
+RETURN e.error, e.timestamp, e.body
+ORDER BY e.timestamp DESC
+LIMIT 10
+
+// Логи конкретного пользователя
+MATCH (u:User {telegram_id: 123456789})-[:LOGGED]->(l:Log)
+RETURN l.event, l.timestamp
+ORDER BY l.timestamp DESC
+```
+
+Проверьте workflow 09 и 10 активны:
+```bash
+# В n8n UI проверьте что workflows активны
+# Логи отображаются в консоли n8n
+docker logs -f n8n-notes
 ```
 
 ## Разработка

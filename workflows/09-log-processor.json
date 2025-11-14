@@ -1,0 +1,121 @@
+{
+  "name": "09 - Log Processor",
+  "nodes": [
+    {
+      "parameters": {
+        "queue": "log_events",
+        "options": {
+          "acknowledge": "immediatelyAfterMessageReceived"
+        }
+      },
+      "id": "rabbitmq-trigger-logs",
+      "name": "RabbitMQ Trigger - log_events",
+      "type": "n8n-nodes-base.rabbitmqTrigger",
+      "typeVersion": 1,
+      "position": [240, 300],
+      "credentials": {
+        "rabbitmq": {
+          "id": "1",
+          "name": "RabbitMQ account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse incoming log message\nlet contentStr;\n\nif ($input.item.json.content) {\n  contentStr = Buffer.isBuffer($input.item.json.content)\n    ? $input.item.json.content.toString()\n    : $input.item.json.content;\n} else {\n  contentStr = JSON.stringify($input.item.json);\n}\n\n// Remove leading '=' if present\nif (contentStr.startsWith('=')) {\n  contentStr = contentStr.substring(1);\n}\n\nconst logData = JSON.parse(contentStr);\n\n// Format for Neo4j\nreturn {\n  event: logData.event,\n  user_id: logData.user_id || null,\n  timestamp: logData.timestamp || new Date().toISOString(),\n  data: JSON.stringify(logData)\n};"
+      },
+      "id": "parse-log",
+      "name": "Parse Log Message",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://neo4j:7474/db/neo4j/tx/commit",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ {\n  \"statements\": [{\n    \"statement\": \"MERGE (u:User {telegram_id: $user_id}) CREATE (l:Log { id: randomUUID(), event: $event, timestamp: datetime($timestamp), data: $data, created_at: datetime() }) CREATE (u)-[:LOGGED]->(l) RETURN l\",\n    \"parameters\": {\n      \"user_id\": $json.user_id,\n      \"event\": $json.event,\n      \"timestamp\": $json.timestamp,\n      \"data\": $json.data\n    }\n  }]\n} }}",
+        "options": {}
+      },
+      "id": "save-to-neo4j",
+      "name": "Save Log to Neo4j",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [680, 300],
+      "credentials": {
+        "httpBasicAuth": {
+          "id": "5",
+          "name": "Neo4j Basic Auth"
+        }
+      },
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// Format log output for console\nconst log = $json;\nconst event = $node[\"Parse Log Message\"].json.event;\nconst userId = $node[\"Parse Log Message\"].json.user_id;\nconst timestamp = new Date($node[\"Parse Log Message\"].json.timestamp).toLocaleString();\n\nconst logMessage = `[${timestamp}] ${event} - User: ${userId || 'N/A'}`;\n\nconsole.log('📝 LOG:', logMessage);\n\nreturn {\n  logged: true,\n  message: logMessage\n};"
+      },
+      "id": "console-output",
+      "name": "Console Output",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [900, 300]
+    }
+  ],
+  "connections": {
+    "RabbitMQ Trigger - log_events": {
+      "main": [
+        [
+          {
+            "node": "Parse Log Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Log Message": {
+      "main": [
+        [
+          {
+            "node": "Save Log to Neo4j",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save Log to Neo4j": {
+      "main": [
+        [
+          {
+            "node": "Console Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 1,
+  "updatedAt": "2025-11-14T00:00:00.000Z",
+  "versionId": "1"
+}

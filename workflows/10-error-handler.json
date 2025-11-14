@@ -1,0 +1,121 @@
+{
+  "name": "10 - Error Handler",
+  "nodes": [
+    {
+      "parameters": {
+        "queue": "http_errors",
+        "options": {
+          "acknowledge": "immediatelyAfterMessageReceived"
+        }
+      },
+      "id": "rabbitmq-trigger-errors",
+      "name": "RabbitMQ Trigger - http_errors",
+      "type": "n8n-nodes-base.rabbitmqTrigger",
+      "typeVersion": 1,
+      "position": [240, 300],
+      "credentials": {
+        "rabbitmq": {
+          "id": "1",
+          "name": "RabbitMQ account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse incoming error message\nlet contentStr;\n\nif ($input.item.json.content) {\n  contentStr = Buffer.isBuffer($input.item.json.content)\n    ? $input.item.json.content.toString()\n    : $input.item.json.content;\n} else {\n  contentStr = JSON.stringify($input.item.json);\n}\n\n// Remove leading '=' if present\nif (contentStr.startsWith('=')) {\n  contentStr = contentStr.substring(1);\n}\n\nconst errorData = JSON.parse(contentStr);\n\n// Format for Neo4j\nreturn {\n  error: errorData.error || 'Unknown error',\n  body: JSON.stringify(errorData.body || {}),\n  timestamp: errorData.timestamp || new Date().toISOString(),\n  data: JSON.stringify(errorData)\n};"
+      },
+      "id": "parse-error",
+      "name": "Parse Error Message",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://neo4j:7474/db/neo4j/tx/commit",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ {\n  \"statements\": [{\n    \"statement\": \"CREATE (e:Error { id: randomUUID(), error: $error, body: $body, timestamp: datetime($timestamp), created_at: datetime() }) RETURN e\",\n    \"parameters\": {\n      \"error\": $json.error,\n      \"body\": $json.body,\n      \"timestamp\": $json.timestamp\n    }\n  }]\n} }}",
+        "options": {}
+      },
+      "id": "save-error-neo4j",
+      "name": "Save Error to Neo4j",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [680, 300],
+      "credentials": {
+        "httpBasicAuth": {
+          "id": "5",
+          "name": "Neo4j Basic Auth"
+        }
+      },
+      "continueOnFail": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// Format error output for console\nconst error = $node[\"Parse Error Message\"].json.error;\nconst timestamp = new Date($node[\"Parse Error Message\"].json.timestamp).toLocaleString();\nconst bodyPreview = $node[\"Parse Error Message\"].json.body.substring(0, 100);\n\nconst errorMessage = `[${timestamp}] ERROR: ${error}\\nBody: ${bodyPreview}...`;\n\nconsole.error('🔴 ERROR:', errorMessage);\n\nreturn {\n  logged: true,\n  error: error,\n  message: errorMessage\n};"
+      },
+      "id": "console-error",
+      "name": "Console Error Output",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [900, 300]
+    }
+  ],
+  "connections": {
+    "RabbitMQ Trigger - http_errors": {
+      "main": [
+        [
+          {
+            "node": "Parse Error Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Error Message": {
+      "main": [
+        [
+          {
+            "node": "Save Error to Neo4j",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save Error to Neo4j": {
+      "main": [
+        [
+          {
+            "node": "Console Error Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 1,
+  "updatedAt": "2025-11-14T00:00:00.000Z",
+  "versionId": "1"
+}
